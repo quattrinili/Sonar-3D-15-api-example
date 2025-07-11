@@ -14,6 +14,11 @@ USAGE:
 """
 import socket
 import struct
+import rospy
+from std_msgs.msg import String
+from std_msgs.msg import ByteMultiArray
+from std_msgs.msg import UInt8MultiArray
+
 
 # Multicast group and port used by the Sonar 3D-15
 MULTICAST_GROUP = '224.0.0.96'
@@ -25,6 +30,8 @@ SONAR_IP = ""
 # The maximum possible packet size for Sonar 3D-15 data
 BUFFER_SIZE = 65535
 
+pub_raw = None
+pub_raw2 = None
 
 def receive_multicast(filename: str):
     """
@@ -53,7 +60,7 @@ def receive_multicast(filename: str):
     with open(filename, 'wb') as f:
 
         try:
-            while True:
+            while not rospy.is_shutdown():
                 data, addr = sock.recvfrom(BUFFER_SIZE)
 
                 # If SONAR_IP is configured, and this doesn't match the known Sonar IP, skip it.
@@ -62,8 +69,19 @@ def receive_multicast(filename: str):
 
                 print(f"Received {len(data)} bytes from {addr}")
 
+                
                 f.write(data)
                 f.flush()
+
+                try:
+                    #pub_raw.publish(data)
+                    msg = UInt8MultiArray()
+                    #msg = ByteMultiArray()
+                    msg.data = list(data) # Convert bytes to a list of integers
+                    pub_raw2.publish(msg)
+                except:
+                    rospy.logerr("Not working")
+                    continue
 
         except KeyboardInterrupt:
             print("\nStopping multicast receiver.")
@@ -72,6 +90,10 @@ def receive_multicast(filename: str):
 
 
 if __name__ == "__main__":
+    rospy.init_node('3dsonar')
+    pub_raw = rospy.Publisher('sonar_3d/raw_data', String, queue_size=10)
+    pub_raw2 = rospy.Publisher('sonar_3d/raw_data_multibyte', UInt8MultiArray, queue_size=10)
+
     import argparse
     parser = argparse.ArgumentParser(
         description="Receive data from a Sonar 3D-15 via Multicast and save to file.")
@@ -88,6 +110,12 @@ if __name__ == "__main__":
         default="",
         help="Output filename for received data (default: )."
     )
+    parser.add_argument(
+        "--index",
+        type=str,
+        default="",
+        help="Index of filename"
+    )
     # Parse arguments
     args = parser.parse_args()
     if args.ip:
@@ -101,6 +129,6 @@ if __name__ == "__main__":
         from datetime import datetime
         now = datetime.now()
         ts = now.strftime("%Y-%m-%d-%H-%M-%S")
-        filename = f"sonar-capture-{ts}.sonar"
+        filename = f"sonar-capture-{ts}-{args.index}.sonar"
 
     receive_multicast(filename)

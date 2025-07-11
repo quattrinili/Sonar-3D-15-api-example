@@ -22,6 +22,23 @@ import struct
 import zlib
 import math
 
+import numpy as np
+
+import rospy
+from std_msgs.msg import UInt8MultiArray
+from sensor_msgs.msg import Image
+from sensor_msgs.msg import PointCloud
+from geometry_msgs.msg import Point32
+from sensor_msgs.msg import ChannelFloat32
+
+from cv_bridge import CvBridge, CvBridgeError
+
+SONAR3D_FRAME = "sonar3d"
+
+pub_range_image = None
+pub_point_cloud = None
+bridge = None
+
 # Generated Protobuf definitions for the Sonar 3D-15 protocol
 from sonar_3d_15_protocol_pb2 import (
     Packet,
@@ -109,7 +126,7 @@ def decode_protobuf_packet(payload: bytes):
     return ("Unknown", any_msg)
 
 
-def rangeImageToXYZ(ri):
+def rangeImageToXYZ(ri, msg):
     """
     Convert RangeImage data to a list of voxels with X, Y, Z coordinates.
     """
@@ -118,7 +135,9 @@ def rangeImageToXYZ(ri):
     fov_h = math.radians(ri.fov_horizontal)
     fov_v = math.radians(ri.fov_vertical)
 
-    voxels = []
+    msg.channels.append(ChannelFloat32(name="yaw"))
+    msg.channels.append(ChannelFloat32(name="pitch"))
+    msg.channels.append(ChannelFloat32(name="distance"))
 
     for pixel_x in range(ri.width):
         for pixel_y in range(ri.height):
@@ -135,17 +154,23 @@ def rangeImageToXYZ(ri):
             y = distance_meters * math.cos(pitch_rad) * math.sin(yaw_rad)
             z = -distance_meters * math.sin(pitch_rad)
 
-            voxel = {
-                "yaw": yaw_rad,  # yaw in radians
-                "pitch": pitch_rad, # pitch in radians
-                "distance": distance_meters, # distance in meters
-                "x": x, # x coordinate in meters
-                "y": y, # y coordinate in meters
-                "z": z # z coordinate in meters
-            }
+            msg.points.append(Point32(x=x,y=y,z=z))
+            msg.channels[0].values.append(yaw_rad)
+            msg.channels[1].values.append(pitch_rad)
+            msg.channels[2].values.append(distance_meters)
+            # voxel = {
+            #     "yaw": yaw_rad,  # yaw in radians
+            #     "pitch": pitch_rad, # pitch in radians
+            #     "distance": distance_meters, # distance in meters
+            #     "x": x, # x coordinate in meters
+            #     "y": y, # y coordinate in meters
+            #     "z": z # z coordinate in meters
+            # }
 
-            voxels.append(voxel)
-    return voxels
+            # voxels.append(voxel)
+
+
+    #return voxels
 
 
 def saveXYZ(voxels, file_path):
@@ -161,23 +186,20 @@ def saveXYZ(voxels, file_path):
             f.write(f"{x} {y} {z}\n")
     print(f"Saved {len(voxels)} voxels to {file_path}")
 
-def saveImage(bmpImg, file_path: str):
+def publishImage(bmpImg):
     """
     Save the BitmapImageGreyscale8 data to a file.
     The data is saved as a grayscale image in PGM format.
     """
-    with open(file_path, 'wb') as f:
-        f.write(b'P2\n') # PGM format identifier
-        f.write(f"{bmpImg.width} {bmpImg.height}\n".encode()) # Write the width and height
-        f.write(b'255\n')  # Max pixel value for PGM
-        # Write pixel data
-        for y in range(bmpImg.height-1, 0, -1): # Flip the image vertically
-            for x in range(bmpImg.width):
-                pixel_value = bmpImg.image_pixel_data[y * bmpImg.width + x]
-                f.write(f"{pixel_value} ".encode())
-            f.write(b'\n')
-    print(f"Saved BitmapImage to {file_path}")
 
+    image = np.zeros((bmpImg.height, bmpImg.width, 1), dtype=np.uint8)
+
+    # Write pixel data
+    for y in range(bmpImg.height-1, 0, -1): # Flip the image vertically
+        for x in range(bmpImg.width):
+            image[y][x] = bmpImg.image_pixel_data[y * bmpImg.width + x]
+
+    return image
 
 def handle_packet(data: bytes, save: bool = False, save_path: str = ""):
     # Parse the RIP1 framing to get the Protobuf payload
@@ -195,6 +217,7 @@ def handle_packet(data: bytes, save: bool = False, save_path: str = ""):
     #print(f"Received '{msg_type}' from {addr}")
 
     if msg_type == "BitmapImageGreyscale8":
+
         # Print out main fields
         print("  BitmapImageGreyscale8 data:")
         print(f"    Type: {msg_obj.type}")
@@ -207,12 +230,19 @@ def handle_packet(data: bytes, save: bool = False, save_path: str = ""):
         dt = msg_obj.header.timestamp.ToDatetime()
         print(f"    Sequence ID:     {seq_id}")
         print(f"    Timestamp (UTC): {dt.isoformat()}")
+        image = publishImage(msg_obj)
 
-        # Data
-        if save:
-            filename = f"sonar_image_{seq_id}.pgm"
-            file_path = os.path.join(save_path, filename)
-            saveImage(msg_obj, file_path)
+        try:
+            # Convert the OpenCV image to a ROS Image message
+            ros_image_msg = bridge.cv2_to_imgmsg(image, "mono8")
+        except CvBridgeError as e:
+            rospy.logerr(e)
+            return
+        
+        ros_image_msg.header.seq = seq_id
+        ros_image_msg.header.stamp = rospy.Time.from_sec(dt.timestamp())
+        ros_image_msg.header.frame_id = SONAR3D_FRAME
+        pub_range_image.publish(ros_image_msg)
 
     elif msg_type == "RangeImage":
         # Print out main fields
@@ -229,13 +259,19 @@ def handle_packet(data: bytes, save: bool = False, save_path: str = ""):
         print(f"    Timestamp (UTC):     {dt.isoformat()}")
 
         # Convert to XYZ coordinates
-        voxels = rangeImageToXYZ(msg_obj)
-        print(f"    Voxel count:         {len(voxels)}")
-        if save:
-            # Save to XYZ file
-            filename = f"sonar_voxels_{seq_id}.xyz"
-            file_path = os.path.join(save_path, filename)
-            saveXYZ(voxels, file_path)
+        msg_point_cloud = PointCloud()
+        msg_point_cloud.header.seq = seq_id
+        msg_point_cloud.header.stamp = rospy.Time.from_sec(dt.timestamp())
+        msg_point_cloud.header.frame_id = SONAR3D_FRAME
+        rangeImageToXYZ(msg_obj, msg_point_cloud)
+        pub_point_cloud.publish(msg_point_cloud)
+
+        # print(f"    Voxel count:         {len(voxels)}")
+        # if save:
+        #     # Save to XYZ file
+        #     filename = f"sonar_voxels_{seq_id}.xyz"
+        #     file_path = os.path.join(save_path, filename)
+        #     saveXYZ(voxels, file_path)
 
     else:
         # We don't have a custom handler for other message types
@@ -245,7 +281,7 @@ def handle_packet(data: bytes, save: bool = False, save_path: str = ""):
     print()  # Extra blank line for readability
 
 
-def parse_file(filename, save: bool = False):
+def sonar_msg_callback(msg):
     """
     Listen for Sonar 3D-15 UDP multicast packets on a specific port.
     - Filters packets based on the known Sonar IP address.
@@ -253,56 +289,22 @@ def parse_file(filename, save: bool = False):
     - Decodes the Protobuf message.
     - Prints relevant info (e.g. dimension, FoV, timestamp).
     """
-    # Set up a UDP socket with multicast membership
-
-    with open(filename, 'rb') as f:
-        content = f.read()
-
-    # If we are saving data, create a directory for the files
-    # Get the basename of the file without the extension
-    # and use it as the directory name
-    save_path = os.path.splitext(os.path.basename(filename))[0]
-    if save:
-        os.makedirs(save_path, exist_ok=True)
-
+    content = bytes(msg.data)
 
     packets = content.split(b'RIP1')
     for pkt in packets:
 
         # Parse the RIP1 framing to get the Protobuf payload
-        handle_packet(b'RIP1' + pkt, save=save, save_path=save_path)
+        handle_packet(b'RIP1' + pkt)
 
 
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(
-        description="Decode Sonar 3D-15 data from file or from multicast.")
-    parser.add_argument(
-        "--save",
-        action="store_true",
-        help="Save RangeImage data to XYZ file format and BitmapImage to PGM file format."
-    )
-    parser.add_argument(
-        "--file",
-        type=str,
-        default="",
-        help="Filename to parse."
-    )
-    # Parse arguments
-    args = parser.parse_args()
-    if args.file:
-        # Parse a file instead of listening to multicast
-        print(f"Parsing file: {args.file}")
-        # Verify the file exists
-        try:
-            with open(args.file, 'rb') as f:
-                pass
-        except FileNotFoundError:
-            print(f"File not found: {args.file}")
-            exit(1)
+    rospy.init_node('sonar_3d')
+    rospy.Subscriber('sonar_3d/raw_data_multibyte', UInt8MultiArray, sonar_msg_callback, queue_size=10)
 
-        parse_file(args.file, save=args.save)
-        exit(0)
-    else:
-        print("No file specified. Use --file to specify a file to parse.")
-        exit(1)
+    pub_range_image = rospy.Publisher('sonar_3d/range_image', Image)
+    pub_point_cloud = rospy.Publisher('sonar_3d/point_cloud', PointCloud)
+
+    bridge = CvBridge()
+
+    rospy.spin()

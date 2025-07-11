@@ -5,8 +5,8 @@
 .PHONY: all
 all: protoc/bin/protoc
 	@echo "BUILD PROTOC"
-	protoc/bin/protoc --version
-	protoc/bin/protoc --python_out=. sonar-3d-15-protocol.proto
+	protoc --version
+	protoc --python_out=. sonar-3d-15-protocol.proto
 
 protoc/bin/protoc:
 	@echo "INSTALL PROTOC"

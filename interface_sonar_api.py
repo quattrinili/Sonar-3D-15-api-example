@@ -130,8 +130,10 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--acoustics",
-        type=str,
-        choices=["enable", "disable"],
+        #type=str,
+        type=bool,
+        #choices=["enable", "disable"],
+        choices=[True, False],
         help="Enable or disable acoustics",
         default=None,
     )

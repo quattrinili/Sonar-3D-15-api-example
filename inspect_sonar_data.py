@@ -42,6 +42,8 @@ SONAR_POINT_CLOUD_TOPIC = f'{SONAR3D_FRAME}/point_cloud'
 YEAR_CHECK = 2023 # year check as there are some messages that have year 0 or 1
 TIME_FORMAT =  "%Y-%m-%d-%H-%M-%S"
 RAW_DATA_FILE_PREFIX = "sonar-capture-"
+USE_SENSOR_STAMP = False # use sensor timestamp (True) or current time (False)
+
 
 class Modes(Enum):
     FILE = 1
@@ -51,6 +53,7 @@ class Modes(Enum):
 pub_range_image = None
 pub_point_cloud = None
 bridge = None
+use_sensor_stamp = USE_SENSOR_STAMP #
 
 # Generated Protobuf definitions for the Sonar 3D-15 protocol
 from sonar_3d_15_protocol_pb2 import (
@@ -277,7 +280,10 @@ def handle_packet(data: bytes, mode: Modes = Modes.ROS, save_path: str = ""):
             return
         
         ros_image_msg.header.seq = seq_id
-        ros_image_msg.header.stamp = rospy.Time.from_sec(dt.timestamp())
+        if use_sensor_stamp:
+            ros_image_msg.header.stamp = rospy.Time.from_sec(dt.timestamp())
+        else:
+            ros_image_msg.header.stamp = rospy.Time.now()
         ros_image_msg.header.frame_id = SONAR3D_FRAME
 
         # Data
@@ -310,7 +316,10 @@ def handle_packet(data: bytes, mode: Modes = Modes.ROS, save_path: str = ""):
         # Convert to XYZ coordinates
         msg_point_cloud = PointCloud()
         msg_point_cloud.header.seq = seq_id
-        msg_point_cloud.header.stamp = rospy.Time.from_sec(dt.timestamp())
+        if use_sensor_stamp:
+            ros_image_msg.header.stamp = rospy.Time.from_sec(dt.timestamp())
+        else:
+            ros_image_msg.header.stamp = rospy.Time.now()
         msg_point_cloud.header.frame_id = SONAR3D_FRAME
         voxels = rangeImageToXYZ(msg_obj, msg_point_cloud)
 
@@ -472,9 +481,9 @@ if __name__ == "__main__":
     elif args.mode == Modes.ROS.value:
         rospy.init_node(SONAR3D_FRAME)
         rospy.Subscriber(SONAR_RAW_DATA_TOPIC, UInt8MultiArray, sonar_msg_callback, queue_size=10)
-
-        pub_range_image = rospy.Publisher(SONAR_RANGE_IMAGE_TOPIC, Image)
-        pub_point_cloud = rospy.Publisher(SONAR_POINT_CLOUD_TOPIC, PointCloud)
+        use_sensor_stamp = rospy.get_param('~use_sensor_stamp', USE_SENSOR_STAMP)
+        pub_range_image = rospy.Publisher(SONAR_RANGE_IMAGE_TOPIC, Image, queue_size=10)
+        pub_point_cloud = rospy.Publisher(SONAR_POINT_CLOUD_TOPIC, PointCloud, queue_size=10)
 
         bridge = CvBridge()
         print("ROS MODE")

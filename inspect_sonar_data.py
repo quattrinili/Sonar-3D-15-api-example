@@ -309,7 +309,6 @@ def handle_packet(data: bytes, mode: Modes = Modes.ROS, save_path: str = ""):
         dt = msg_obj.header.timestamp.ToDatetime()
         print(f"    Sequence ID:         {seq_id}")
         print(f"    Timestamp (UTC):     {dt.isoformat()}")
-        print(f"dt.year {dt.year}")
         if dt.year < YEAR_CHECK:
             return
 

@@ -411,7 +411,7 @@ def parse_file(filename, mode: Modes = Modes.ROS, rosbag_file: str = None):
                     print(f"t {t.to_sec()}-----writing SONAR MSG {current_sonar_frame_time}")
                     sonar_raw_msg = UInt8MultiArray()
                     sonar_raw_msg.data = list(b'RIP1' + pkt) # Convert bytes to a list of integers
-                    output_bag.write("sonar_3d/raw_data_multibyte", sonar_raw_msg)
+                    output_bag.write(SONAR_POINT_CLOUD_TOPIC, sonar_raw_msg)
                     break
             previous_time = r.header.stamp.to_sec()
     if mode == Modes.ADD_BAG:

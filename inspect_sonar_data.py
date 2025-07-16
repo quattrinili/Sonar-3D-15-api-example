@@ -384,9 +384,6 @@ def parse_file(filename, mode: Modes = Modes.ROS, rosbag_file: str = None):
     current_sonar_frame_time = dt.timestamp()
     previous_time = None
 
-    print(current_sonar_frame_time)
-
-
     # If we are saving data, create a directory for the files
     # Get the basename of the file without the extension
     # and use it as the directory name

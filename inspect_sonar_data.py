@@ -497,6 +497,7 @@ if __name__ == "__main__":
 
     elif args.mode == Modes.ADD_BAG.value:
         if args.file and args.rosbag_file:
+            use_sensor_stamp = True
             # Parse a file instead of listening to multicast
             print(f"Parsing file: {args.file}")
             check_file_existence(args.file)

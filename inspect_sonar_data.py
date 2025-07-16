@@ -404,6 +404,7 @@ def parse_file(filename, mode: Modes = Modes.ROS, rosbag_file: str = None):
         input_bag_iterator = input_bag.read_messages()
         output_bag = rosbag.Bag(output_bag_filename, 'w') 
 
+    non_valid_packets = 0
     packets = content.split(b'RIP1')
     for pkt in packets:
         # Parse the RIP1 framing to get the Protobuf payload
@@ -415,14 +416,18 @@ def parse_file(filename, mode: Modes = Modes.ROS, rosbag_file: str = None):
             while True:
                 topic, msg, t = next(input_bag_iterator)
                 if t.to_sec() < current_sonar_frame_time:
-                    output_bag.write(topic, msg)
+                    output_bag.write(topic, msg, t)
                 else:
                     print(f"t {t.to_sec()}-----writing SONAR MSG {current_sonar_frame_time}")
                     sonar_raw_msg = UInt8MultiArray()
                     sonar_raw_msg.data = list(b'RIP1' + pkt) # Convert bytes to a list of integers
-                    output_bag.write(SONAR_POINT_CLOUD_TOPIC, sonar_raw_msg)
+                    output_bag.write(SONAR_POINT_CLOUD_TOPIC, sonar_raw_msg, current_sonar_frame_time)
                     break
             previous_time = r.header.stamp.to_sec()
+        else:
+            non_valid_packets += 1
+    
+    print(f"Non valid packets {non_valid_packets}/{len(packets)}")
     if mode == Modes.ADD_BAG:
         output_bag.close()
 

@@ -317,9 +317,9 @@ def handle_packet(data: bytes, mode: Modes = Modes.ROS, save_path: str = ""):
         msg_point_cloud = PointCloud()
         msg_point_cloud.header.seq = seq_id
         if use_sensor_stamp:
-            ros_image_msg.header.stamp = rospy.Time.from_sec(dt.timestamp())
+            msg_point_cloud.header.stamp = rospy.Time.from_sec(dt.timestamp())
         else:
-            ros_image_msg.header.stamp = rospy.Time.now()
+            msg_point_cloud.header.stamp = rospy.Time.now()
         msg_point_cloud.header.frame_id = SONAR3D_FRAME
         voxels = rangeImageToXYZ(msg_obj, msg_point_cloud)
 

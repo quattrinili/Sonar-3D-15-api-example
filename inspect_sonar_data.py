@@ -29,9 +29,6 @@ from enum import Enum
 import rospy
 from std_msgs.msg import UInt8MultiArray
 from sensor_msgs.msg import Image
-from sensor_msgs.msg import PointCloud
-from geometry_msgs.msg import Point32
-from sensor_msgs.msg import ChannelFloat32
 
 from cv_bridge import CvBridge, CvBridgeError
 
@@ -43,6 +40,8 @@ YEAR_CHECK = 2023 # year check as there are some messages that have year 0 or 1
 TIME_FORMAT =  "%Y-%m-%d-%H-%M-%S"
 RAW_DATA_FILE_PREFIX = "sonar-capture-"
 USE_SENSOR_STAMP = False # use sensor timestamp (True) or current time (False)
+POINT_CLOUD_VERSION = 2 # 1 for PointCloud or 2 for PointCloud2
+
 
 
 class Modes(Enum):
@@ -150,11 +149,27 @@ def rangeImageToXYZ(ri, msg=None):
     max_pixel_y = ri.height - 1
     fov_h = math.radians(ri.fov_horizontal)
     fov_v = math.radians(ri.fov_vertical)
+    num_points = ri.width * ri.height
 
     if msg is not None:
-        msg.channels.append(ChannelFloat32(name="yaw"))
-        msg.channels.append(ChannelFloat32(name="pitch"))
-        msg.channels.append(ChannelFloat32(name="distance"))
+        if POINT_CLOUD_VERSION == 1:
+            msg.channels.append(ChannelFloat32(name="yaw")) #TDOO constant for channel names
+            msg.channels.append(ChannelFloat32(name="pitch"))
+            msg.channels.append(ChannelFloat32(name="distance"))
+        elif POINT_CLOUD_VERSION == 2:
+            msg.height = ri.height
+            msg.width = ri.width
+            fields = [PointField(name="x", offset=0, datatype=PointField.FLOAT32, count=num_points),
+                PointField(name="y", offset=4, datatype=PointField.FLOAT32, count=num_points),
+                PointField(name="z", offset=8, datatype=PointField.FLOAT32, count=num_points),
+                PointField(name="yaw", offset=12, datatype=PointField.FLOAT32, count=num_points),
+                PointField(name="pitch", offset=16, datatype=PointField.FLOAT32, count=num_points),
+                PointField(name="distance", offset=20, datatype=PointField.FLOAT32, count=num_points)]
+            msg.fields = fields
+            msg.point_step = len(fields) * 4 
+            msg.row_step = msg.point_step * num_points
+            msg.is_dense = True # Verify if that should be set to True or not -- if all points are valid
+            points = []
     else:
         voxels = []
 
@@ -174,10 +189,13 @@ def rangeImageToXYZ(ri, msg=None):
             z = -distance_meters * math.sin(pitch_rad)
 
             if msg is not None:
-                msg.points.append(Point32(x=x,y=y,z=z))
-                msg.channels[0].values.append(yaw_rad)
-                msg.channels[1].values.append(pitch_rad)
-                msg.channels[2].values.append(distance_meters)
+                if POINT_CLOUD_VERSION == 1:
+                    msg.points.append(Point32(x=x,y=y,z=z))
+                    msg.channels[0].values.append(yaw_rad)
+                    msg.channels[1].values.append(pitch_rad)
+                    msg.channels[2].values.append(distance_meters)
+                elif POINT_CLOUD_VERSION == 2:
+                    points.append([x,y,z,yaw_rad,pitch_rad,distance_meters])
             else:
                 voxel = {
                     "yaw": yaw_rad,  # yaw in radians
@@ -192,6 +210,10 @@ def rangeImageToXYZ(ri, msg=None):
 
     if msg is None:
         return voxels
+    else:
+        if POINT_CLOUD_VERSION == 2:
+            pc_msg = point_cloud2.create_cloud(msg.header, msg.fields, points)
+            msg.data = pc_msg.data
 
 
 def saveXYZ(voxels, file_path):
@@ -484,7 +506,18 @@ if __name__ == "__main__":
         rospy.Subscriber(SONAR_RAW_DATA_TOPIC, UInt8MultiArray, sonar_msg_callback, queue_size=10)
         use_sensor_stamp = rospy.get_param('~use_sensor_stamp', USE_SENSOR_STAMP)
         pub_range_image = rospy.Publisher(SONAR_RANGE_IMAGE_TOPIC, Image, queue_size=10)
-        pub_point_cloud = rospy.Publisher(SONAR_POINT_CLOUD_TOPIC, PointCloud, queue_size=10)
+
+        if POINT_CLOUD_VERSION == 1:
+            from geometry_msgs.msg import Point32
+            from sensor_msgs.msg import ChannelFloat32
+            from sensor_msgs.msg import PointCloud
+            pub_point_cloud = rospy.Publisher(SONAR_POINT_CLOUD_TOPIC, PointCloud, queue_size=10)
+        elif POINT_CLOUD_VERSION == 2:
+            from sensor_msgs.msg import PointField
+            from sensor_msgs.msg import PointCloud2 as PointCloud
+            from sensor_msgs import point_cloud2
+
+            pub_point_cloud = rospy.Publisher(SONAR_POINT_CLOUD_TOPIC, PointCloud, queue_size=10)
 
         bridge = CvBridge()
         print("ROS MODE")
